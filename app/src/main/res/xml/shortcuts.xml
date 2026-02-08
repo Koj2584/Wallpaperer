@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <capability android:name="actions.intent.OPEN_APP_FEATURE">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.vomelaj.wallpaperer"
+            android:targetClass="com.vomelaj.wallpaperer.MainActivity">
+            <url-template android:value="wallpaperapp://open?folder={feature}" />
+            <parameter
+                android:name="feature"
+                android:key="feature" />
+        </intent>
+    </capability>
+
+    <!-- Schopnost: Get Thing (např. "Search for Cars in Wallpaperer") -->
+    <capability android:name="actions.intent.GET_THING">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.vomelaj.wallpaperer"
+            android:targetClass="com.vomelaj.wallpaperer.MainActivity">
+            <url-template android:value="wallpaperapp://open?folder={name}" />
+            <parameter
+                android:name="thing.name"
+                android:key="name" />
+        </intent>
+    </capability>
+
+    <!-- STATICKÁ ZKRATKA PRO TESTOVÁNÍ -->
+    <!-- Dlouze podržte ikonu aplikace a vyberte "Test Anime" -->
+    <shortcut
+        android:shortcutId="test_anime"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/app_name">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.vomelaj.wallpaperer"
+            android:targetClass="com.vomelaj.wallpaperer.MainActivity"
+            android:data="wallpaperapp://open?folder=Anime" />
+    </shortcut>
+
+</shortcuts>
