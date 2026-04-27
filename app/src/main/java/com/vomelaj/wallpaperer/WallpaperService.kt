@@ -7,6 +7,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.net.Uri
+import android.util.Log
 import android.service.wallpaper.WallpaperService as BaseWallpaperService
 import android.view.SurfaceHolder
 import androidx.compose.runtime.getValue
@@ -21,6 +22,7 @@ import java.io.InputStream
 class WallpaperService : BaseWallpaperService() {
 
     companion object {
+        private const val TAG = "WallpaperService"
         var activeEngineCount by mutableStateOf(0)
     }
 
@@ -120,7 +122,7 @@ class WallpaperService : BaseWallpaperService() {
                 
                 refillShuffleBag(activeFolderUriStr)
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e(TAG, "Error reloading image deck", e)
             }
         }
 
@@ -165,13 +167,13 @@ class WallpaperService : BaseWallpaperService() {
                     }
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e(TAG, "Error drawing wallpaper", e)
             } finally {
                 if (canvas != null) {
                     try {
                         holder.unlockCanvasAndPost(canvas)
                     } catch (e: Exception) {
-                        e.printStackTrace()
+                        Log.e(TAG, "Error unlocking canvas", e)
                     }
                 }
             }
@@ -230,7 +232,7 @@ class WallpaperService : BaseWallpaperService() {
                     }
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e(TAG, "Error preparing wallpaper", e)
             }
         }
 
@@ -253,7 +255,7 @@ class WallpaperService : BaseWallpaperService() {
                 }
                 unshownImages.shuffle()
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e(TAG, "Error refilling shuffle bag", e)
             }
         }
         
@@ -280,7 +282,7 @@ class WallpaperService : BaseWallpaperService() {
 
                 bitmap
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e(TAG, "Error decoding bitmap", e)
                 null
             }
         }

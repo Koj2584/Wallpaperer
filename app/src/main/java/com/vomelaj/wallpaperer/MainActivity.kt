@@ -13,6 +13,7 @@ import android.os.Bundle
 import android.provider.OpenableColumns
 import android.provider.Settings
 import android.text.TextUtils
+import android.util.Log
 import android.view.ViewTreeObserver
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -59,6 +60,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
+
+private const val TAG = "MainActivity"
 
 // --- Colors ---
 val DarkBackground = Color(0xFF121212)
@@ -237,7 +240,7 @@ fun WallpaperApp() {
                                         }
                                         Toast.makeText(context, "Wallpaper deactivated", Toast.LENGTH_SHORT).show()
                                     } catch (e: Exception) {
-                                        e.printStackTrace()
+                                        Log.e(TAG, "Error deactivating wallpaper", e)
                                     }
                                 }
                             },
@@ -654,7 +657,7 @@ fun deleteInternalAlbum(uriStr: String) {
     try {
         val file = File(Uri.parse(uriStr).path ?: return)
         if (file.exists()) file.deleteRecursively()
-    } catch (e: Exception) { e.printStackTrace() }
+    } catch (e: Exception) { Log.e(TAG, "Error deleting album", e) }
 }
 
 suspend fun copyPhotosToInternalAlbum(context: Context, sourceUris: List<Uri>, targetAlbumUriStr: String): Int {
@@ -681,9 +684,9 @@ suspend fun copyPhotosToInternalAlbum(context: Context, sourceUris: List<Uri>, t
                             count++
                         }
                     }
-                } catch (e: Exception) { e.printStackTrace() }
+                } catch (e: Exception) { Log.e(TAG, "Error copying photo", e) }
             }
-        } catch (e: Exception) { e.printStackTrace() }
+        } catch (e: Exception) { Log.e(TAG, "Error in copy photos process", e) }
         count
     }
 }
