@@ -247,7 +247,7 @@ class WallpaperService : BaseWallpaperService() {
                     val files = folder.listFiles()
                     if (files != null) {
                         for (file in files) {
-                            if (file.isFile && isImageFile(file.name)) {
+                            if (isImageFile(file.name) && file.isFile) {
                                 unshownImages.add(Uri.fromFile(file))
                             }
                         }
