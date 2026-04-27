@@ -12,6 +12,7 @@ import android.util.Log
 class NotificationCleanerService : NotificationListenerService() {
 
     companion object {
+        private const val TAG = "NotificationCleanerService"
         const val ACTION_DISMISS_SMARTTHINGS = "com.vomelaj.wallpaperer.ACTION_DISMISS_SMARTTHINGS"
         const val EXTRA_FOLDER_NAME = "extra_folder_name"
     }
@@ -41,7 +42,7 @@ class NotificationCleanerService : NotificationListenerService() {
         try {
             unregisterReceiver(dismissalReceiver)
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Error unregistering receiver", e)
         }
     }
 
@@ -69,7 +70,7 @@ class NotificationCleanerService : NotificationListenerService() {
                 }
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Error dismissing notification", e)
         }
     }
 }
