@@ -11,6 +11,7 @@ import android.util.Log
 class AutoBackService : AccessibilityService() {
 
     companion object {
+        private const val TAG = "AutoBackService"
         const val ACTION_TRIGGER_BACK = "com.vomelaj.wallpaperer.ACTION_TRIGGER_BACK"
 
         fun triggerBack(context: Context) {
@@ -53,7 +54,7 @@ class AutoBackService : AccessibilityService() {
         try {
             unregisterReceiver(backReceiver)
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Error unregistering receiver", e)
         }
     }
 }
