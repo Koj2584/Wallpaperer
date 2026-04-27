@@ -11,6 +11,7 @@ import android.util.Log
 class AutoBackService : AccessibilityService() {
 
     companion object {
+        private const val TAG = "AutoBackService"
         const val ACTION_TRIGGER_BACK = "com.vomelaj.wallpaperer.ACTION_TRIGGER_BACK"
 
         fun triggerBack(context: Context) {
@@ -23,7 +24,7 @@ class AutoBackService : AccessibilityService() {
     private val backReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == ACTION_TRIGGER_BACK) {
-                Log.d("AutoBackService", "Triggering Global Back Action")
+                Log.d(TAG, "Triggering Global Back Action")
                 performGlobalAction(GLOBAL_ACTION_BACK)
             }
         }
@@ -37,7 +38,7 @@ class AutoBackService : AccessibilityService() {
         } else {
             registerReceiver(backReceiver, filter)
         }
-        Log.d("AutoBackService", "Service Connected")
+        Log.d(TAG, "Service Connected")
     }
 
     override fun onAccessibilityEvent(event: android.view.accessibility.AccessibilityEvent?) {
@@ -53,7 +54,7 @@ class AutoBackService : AccessibilityService() {
         try {
             unregisterReceiver(backReceiver)
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Error unregistering backReceiver", e)
         }
     }
 }
