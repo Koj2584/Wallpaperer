@@ -1,5 +1,6 @@
 package com.vomelaj.wallpaperer
 
+import android.util.Log
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.WallpaperManager
@@ -73,6 +74,8 @@ data class FolderInfo(
     val name: String,
     val notificationKeyword: String? = null
 )
+private const val TAG = "MainActivity"
+
 
 class MainActivity : ComponentActivity() {
     
@@ -237,7 +240,7 @@ fun WallpaperApp() {
                                         }
                                         Toast.makeText(context, "Wallpaper deactivated", Toast.LENGTH_SHORT).show()
                                     } catch (e: Exception) {
-                                        e.printStackTrace()
+                                        Log.e(TAG, "Error clearing wallpaper", e)
                                     }
                                 }
                             },
@@ -654,7 +657,7 @@ fun deleteInternalAlbum(uriStr: String) {
     try {
         val file = File(Uri.parse(uriStr).path ?: return)
         if (file.exists()) file.deleteRecursively()
-    } catch (e: Exception) { e.printStackTrace() }
+    } catch (e: Exception) { Log.e(TAG, "Error deleting internal album", e) }
 }
 
 suspend fun copyPhotosToInternalAlbum(context: Context, sourceUris: List<Uri>, targetAlbumUriStr: String): Int {
@@ -681,9 +684,9 @@ suspend fun copyPhotosToInternalAlbum(context: Context, sourceUris: List<Uri>, t
                             count++
                         }
                     }
-                } catch (e: Exception) { e.printStackTrace() }
+                } catch (e: Exception) { Log.e(TAG, "Error copying photos to internal album", e) }
             }
-        } catch (e: Exception) { e.printStackTrace() }
+        } catch (e: Exception) { Log.e(TAG, "Error copying photos to internal album", e) }
         count
     }
 }
