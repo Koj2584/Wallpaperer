@@ -240,7 +240,7 @@ fun WallpaperApp() {
                                         }
                                         Toast.makeText(context, "Wallpaper deactivated", Toast.LENGTH_SHORT).show()
                                     } catch (e: Exception) {
-                                        Log.e(TAG, "Error deactivating wallpaper", e)
+                                        Log.e(TAG, "Error toggling wallpaper service", e)
                                     }
                                 }
                             },
@@ -657,7 +657,9 @@ fun deleteInternalAlbum(uriStr: String) {
     try {
         val file = File(Uri.parse(uriStr).path ?: return)
         if (file.exists()) file.deleteRecursively()
-    } catch (e: Exception) { Log.e(TAG, "Error deleting album", e) }
+    } catch (e: Exception) {
+        Log.e(TAG, "Error deleting internal album", e)
+    }
 }
 
 suspend fun copyPhotosToInternalAlbum(context: Context, sourceUris: List<Uri>, targetAlbumUriStr: String): Int {
@@ -684,9 +686,13 @@ suspend fun copyPhotosToInternalAlbum(context: Context, sourceUris: List<Uri>, t
                             count++
                         }
                     }
-                } catch (e: Exception) { Log.e(TAG, "Error copying photo", e) }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error copying individual photo", e)
+                }
             }
-        } catch (e: Exception) { Log.e(TAG, "Error in copy photos process", e) }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in photo copy process", e)
+        }
         count
     }
 }
