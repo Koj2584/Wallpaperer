@@ -20,6 +20,10 @@ class NotificationCleanerService : NotificationListenerService() {
     private val dismissalReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == ACTION_DISMISS_SMARTTHINGS) {
+                // Respect user preference even if broadcast is received
+                val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+                if (!prefs.getBoolean("pref_notification_cleaning", true)) return
+
                 val folderName = intent.getStringExtra(EXTRA_FOLDER_NAME) ?: return
                 dismissSmartThingsNotification(folderName)
             }
@@ -29,7 +33,6 @@ class NotificationCleanerService : NotificationListenerService() {
     override fun onCreate() {
         super.onCreate()
         val filter = IntentFilter(ACTION_DISMISS_SMARTTHINGS)
-        // For internal broadcasts within the same UID, RECEIVER_NOT_EXPORTED is recommended on API 33+
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(dismissalReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
@@ -55,18 +58,16 @@ class NotificationCleanerService : NotificationListenerService() {
                 val title = extras.getCharSequence("android.title")?.toString() ?: ""
                 val text = extras.getCharSequence("android.text")?.toString() ?: ""
 
-                // Check for SmartThings package or "SmartThings" in text/title
                 val isSmartThings = packageName == "com.samsung.android.oneconnect" || 
                                     title.contains("SmartThings", ignoreCase = true) ||
                                     text.contains("SmartThings", ignoreCase = true)
 
-                // Check if notification matches the specific folder keyword
                 val matchesKeyword = title.contains(keyword, ignoreCase = true) || 
                                      text.contains(keyword, ignoreCase = true)
 
                 if (isSmartThings && matchesKeyword) {
                     cancelNotification(sbn.key)
-                    Log.d("NotifCleaner", "Dismissed SmartThings notification for: $keyword")
+                    Log.d(TAG, "Dismissed SmartThings notification for: $keyword")
                 }
             }
         } catch (e: Exception) {

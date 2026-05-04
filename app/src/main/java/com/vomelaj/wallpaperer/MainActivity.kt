@@ -31,8 +31,10 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -63,7 +65,6 @@ import java.util.UUID
 
 private const val TAG = "MainActivity"
 
-// --- Colors ---
 val DarkBackground = Color(0xFF121212)
 val DarkSurface = Color(0xFF252525)
 val NeonGreen = Color(0xFF00E676)
@@ -72,13 +73,12 @@ val TextWhite = Color(0xFFEEEEEE)
 val TextGray = Color(0xFFAAAAAA)
 
 data class FolderInfo(
-    val uri: String, // Cesta k interní složce (file://...)
+    val uri: String,
     val name: String,
     val notificationKeyword: String? = null
 )
 
 class MainActivity : ComponentActivity() {
-    
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
@@ -92,10 +92,7 @@ class MainActivity : ComponentActivity() {
                     onSurface = TextWhite
                 )
             ) {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = DarkBackground
-                ) {
+                Surface(modifier = Modifier.fillMaxSize(), color = DarkBackground) {
                     WallpaperApp()
                 }
             }
@@ -116,207 +113,149 @@ fun WallpaperApp() {
     val activity = context as? Activity
     val scope = rememberCoroutineScope()
 
-    // --- State for Data ---
-    var folders by remember { mutableStateOf(loadFolders(context)) }
-    var activeFolderUri by remember { mutableStateOf(loadActiveFolderUri(context)) }
+    var folders by remember { mutableStateOf<List<FolderInfo>>(emptyList()) }
+    var activeFolderUri by remember { mutableStateOf<String?>(null) }
     
-    // --- State for Navigation ---
-    // If null, we show the main list. If set, we show the details of that folder.
+    // Načítání dat mimo UI vlákno pro bleskový start
+    LaunchedEffect(Unit) {
+        folders = withContext(Dispatchers.IO) { loadFolders(context) }
+        activeFolderUri = withContext(Dispatchers.IO) { loadActiveFolderUri(context) }
+    }
+    
     var currentOpenedFolder by remember { mutableStateOf<FolderInfo?>(null) }
-    
     val isWallpaperActive = WallpaperService.activeEngineCount > 0
     
-    // --- State for Dialogs ---
-    var showSamsungFixDialog by remember { mutableStateOf(false) }
+    var showSettingsDialog by remember { mutableStateOf(false) }
     var showPermissionDialog by remember { mutableStateOf(false) }
     var showAccessibilityDialog by remember { mutableStateOf(false) }
-    
     var showCreateAlbumDialog by remember { mutableStateOf(false) }
     var newAlbumName by remember { mutableStateOf("") }
-
     var showEditDialog by remember { mutableStateOf(false) }
     var folderToEdit by remember { mutableStateOf<FolderInfo?>(null) }
     var editKeywordText by remember { mutableStateOf("") }
 
-    // Check Permissions on start
     LaunchedEffect(Unit) {
         val packageName = context.packageName
-        val isGranted = NotificationManagerCompat.getEnabledListenerPackages(context).contains(packageName)
+        val isGranted = withContext(Dispatchers.IO) {
+            NotificationManagerCompat.getEnabledListenerPackages(context).contains(packageName)
+        }
         if (!isGranted) showPermissionDialog = true
         if (!isAccessibilityServiceEnabled(context)) showAccessibilityDialog = true
     }
     
-    // Listen to Window Focus (reload data when returning to app)
     val rootView = activity?.window?.decorView
     DisposableEffect(rootView) {
         val focusChangeListener = ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
             if (hasFocus) {
-                folders = loadFolders(context)
-                activeFolderUri = loadActiveFolderUri(context)
+                scope.launch {
+                    folders = withContext(Dispatchers.IO) { loadFolders(context) }
+                    activeFolderUri = withContext(Dispatchers.IO) { loadActiveFolderUri(context) }
+                }
             }
         }
         rootView?.viewTreeObserver?.addOnWindowFocusChangeListener(focusChangeListener)
         onDispose { rootView?.viewTreeObserver?.removeOnWindowFocusChangeListener(focusChangeListener) }
     }
 
-    // Navigation Back Handler
-    BackHandler(enabled = currentOpenedFolder != null) {
-        currentOpenedFolder = null
-    }
+    BackHandler(enabled = currentOpenedFolder != null) { currentOpenedFolder = null }
 
-    // --- VIEW SWITCHING ---
     if (currentOpenedFolder != null) {
-        // === DETAIL SCREEN ===
         AlbumDetailScreen(
             folder = currentOpenedFolder!!,
             onBack = { currentOpenedFolder = null },
             onContentChanged = {
-                // If the active folder content changed, we might want to notify service (optional)
                 if (activeFolderUri == currentOpenedFolder!!.uri) {
-                     saveActiveFolderUri(context, activeFolderUri) // Trigger reload
+                     scope.launch(Dispatchers.IO) { saveActiveFolderUri(context, activeFolderUri) }
                 }
             }
         )
     } else {
-        // === MAIN LIST SCREEN ===
         Scaffold(
             containerColor = DarkBackground,
             topBar = {
                 TopAppBar(
                     title = { Text("WALLPAPERER", color = TextWhite, fontWeight = FontWeight.Bold) },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = DarkBackground,
-                        titleContentColor = TextWhite
-                    ),
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkBackground),
                     actions = {
-                        IconButton(onClick = { showSamsungFixDialog = true }) {
-                            Icon(
-                                imageVector = Icons.Default.Settings,
-                                contentDescription = "Samsung Fix",
-                                tint = TextGray
-                            )
+                        IconButton(onClick = { showSettingsDialog = true }) {
+                            Icon(imageVector = Icons.Default.Settings, contentDescription = "Settings", tint = TextGray)
                         }
                     }
                 )
             },
             floatingActionButton = {
-                FloatingActionButton(
-                    onClick = { showCreateAlbumDialog = true },
-                    containerColor = NeonGreen,
-                    contentColor = Color.Black
-                ) {
+                FloatingActionButton(onClick = { showCreateAlbumDialog = true }, containerColor = NeonGreen, contentColor = Color.Black) {
                     Text("+", style = MaterialTheme.typography.headlineMedium)
                 }
             },
             bottomBar = {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
-                        .navigationBarsPadding()
-                ) {
+                Box(modifier = Modifier.fillMaxWidth().padding(16.dp).navigationBarsPadding()) {
                     if (isWallpaperActive) {
                         Button(
                             onClick = {
-                                scope.launch {
+                                scope.launch(Dispatchers.IO) {
                                     try {
-                                        withContext(Dispatchers.IO) {
-                                            val wm = WallpaperManager.getInstance(context)
-                                            val info = wm.wallpaperInfo
-                                            // Check if we are running on Home Screen
-                                            val isHome = info != null && info.packageName == context.packageName && info.serviceName == WallpaperService::class.java.name
-                                            
-                                            if (isHome) {
-                                                // If on Home, clear standard (removes from Home & Lock usually)
-                                                wm.clear()
-                                            } else {
-                                                // If not on Home (but active), assume Lock Screen only
-                                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                                                    wm.clear(WallpaperManager.FLAG_LOCK)
-                                                } else {
-                                                    wm.clear()
-                                                }
-                                            }
-                                        }
-                                        Toast.makeText(context, "Wallpaper deactivated", Toast.LENGTH_SHORT).show()
-                                    } catch (e: Exception) {
-                                        Log.e(TAG, "Error toggling wallpaper service", e)
-                                    }
+                                        val wm = WallpaperManager.getInstance(context)
+                                        val info = wm.wallpaperInfo
+                                        val isHome = info != null && info.packageName == context.packageName && info.serviceName == WallpaperService::class.java.name
+                                        if (isHome) wm.clear()
+                                        else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) wm.clear(WallpaperManager.FLAG_LOCK)
+                                        else wm.clear()
+                                    } catch (e: Exception) { Log.e(TAG, "Error", e) }
                                 }
                             },
                             modifier = Modifier.fillMaxWidth().height(56.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = DangerRed, contentColor = TextWhite),
                             shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text("DEACTIVATE", fontWeight = FontWeight.Bold)
-                        }
+                        ) { Text("DEACTIVATE", fontWeight = FontWeight.Bold) }
                     } else {
                         Button(
                             onClick = {
-                                val intent = Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER)
-                                intent.putExtra(
-                                    WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT,
-                                    ComponentName(context, WallpaperService::class.java)
-                                )
+                                val intent = Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER).apply {
+                                    putExtra(WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT, ComponentName(context, WallpaperService::class.java))
+                                }
                                 context.startActivity(intent)
                             },
                             modifier = Modifier.fillMaxWidth().height(56.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = NeonGreen, contentColor = Color.Black),
                             shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text("ACTIVATE", fontWeight = FontWeight.Bold)
-                        }
+                        ) { Text("ACTIVATE", fontWeight = FontWeight.Bold) }
                     }
                 }
             }
         ) { innerPadding ->
-            Column(
-                modifier = Modifier.padding(innerPadding).fillMaxSize()
-            ) {
-                Text(
-                    "MY ALBUMS",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = NeonGreen,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                )
-
-                LazyColumn(
-                    contentPadding = PaddingValues(bottom = 80.dp), 
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
-                ) {
+            Column(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
+                Text("MY ALBUMS", style = MaterialTheme.typography.labelLarge, color = NeonGreen, fontWeight = FontWeight.Bold, modifier = Modifier.padding(16.dp))
+                LazyColumn(contentPadding = PaddingValues(bottom = 80.dp), verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
                     items(folders) { folder ->
                         FolderItem(
                             folder = folder,
                             isActive = folder.uri == activeFolderUri,
                             onSelect = {
                                 activeFolderUri = folder.uri
-                                saveActiveFolderUri(context, folder.uri)
+                                scope.launch(Dispatchers.IO) { saveActiveFolderUri(context, folder.uri) }
                                 
-                                val dismissIntent = Intent(NotificationCleanerService.ACTION_DISMISS_SMARTTHINGS)
-                                dismissIntent.setPackage(context.packageName)
-                                val keywordToDismiss = folder.notificationKeyword.takeUnless { it.isNullOrEmpty() } ?: folder.name
-                                dismissIntent.putExtra(NotificationCleanerService.EXTRA_FOLDER_NAME, keywordToDismiss)
-                                context.sendBroadcast(dismissIntent)
+                                // Odeslání broadcastu pouze pokud je zapnutý úklid notifikací
+                                val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+                                if (prefs.getBoolean("pref_notification_cleaning", true)) {
+                                    val intent = Intent(NotificationCleanerService.ACTION_DISMISS_SMARTTHINGS).apply {
+                                        setPackage(context.packageName)
+                                        putExtra(NotificationCleanerService.EXTRA_FOLDER_NAME, folder.notificationKeyword.takeUnless { it.isNullOrEmpty() } ?: folder.name)
+                                    }
+                                    context.sendBroadcast(intent)
+                                }
                             },
-                            onManagePhotos = {
-                                currentOpenedFolder = folder
-                            },
-                            onEdit = {
-                                folderToEdit = folder
-                                editKeywordText = folder.notificationKeyword ?: ""
-                                showEditDialog = true
-                            },
+                            onManagePhotos = { currentOpenedFolder = folder },
+                            onEdit = { folderToEdit = folder; editKeywordText = folder.notificationKeyword ?: ""; showEditDialog = true },
                             onDelete = {
-                                deleteInternalAlbum(folder.uri)
-                                val updatedFolders = folders.filter { it.uri != folder.uri }
-                                folders = updatedFolders
-                                saveFolders(context, updatedFolders)
-                                
-                                if (activeFolderUri == folder.uri) {
-                                    activeFolderUri = null
-                                    saveActiveFolderUri(context, null)
+                                scope.launch {
+                                    withContext(Dispatchers.IO) { deleteInternalAlbum(folder.uri) }
+                                    folders = folders.filter { it.uri != folder.uri }
+                                    withContext(Dispatchers.IO) { saveFolders(context, folders) }
+                                    if (activeFolderUri == folder.uri) {
+                                        activeFolderUri = null
+                                        withContext(Dispatchers.IO) { saveActiveFolderUri(context, null) }
+                                    }
                                 }
                             }
                         )
@@ -326,45 +265,40 @@ fun WallpaperApp() {
         }
     }
 
-    // --- DIALOGS IMPLEMENTATION ---
+    if (showSettingsDialog) {
+        SettingsDialog(onDismiss = { showSettingsDialog = false })
+    }
+
     if (showCreateAlbumDialog) {
         AlertDialog(
             onDismissRequest = { showCreateAlbumDialog = false; newAlbumName = "" },
             title = { Text("Create New Album", color = TextWhite) },
             text = {
                 OutlinedTextField(
-                    value = newAlbumName,
-                    onValueChange = { newAlbumName = it },
-                    label = { Text("Album Name") },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = TextWhite, unfocusedTextColor = TextWhite,
-                        cursorColor = NeonGreen, focusedBorderColor = NeonGreen, unfocusedBorderColor = TextGray
-                    )
+                    value = newAlbumName, onValueChange = { newAlbumName = it }, label = { Text("Album Name") }, singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = TextWhite, unfocusedTextColor = TextWhite, cursorColor = NeonGreen, focusedBorderColor = NeonGreen, unfocusedBorderColor = TextGray)
                 )
             },
             containerColor = DarkSurface,
             confirmButton = {
                 TextButton(onClick = {
                     if (newAlbumName.isNotBlank()) {
-                        val newFolder = createInternalAlbum(context, newAlbumName.trim())
-                        if (newFolder != null) {
-                            val updatedFolders = folders + newFolder
-                            folders = updatedFolders
-                            saveFolders(context, updatedFolders)
-                            if (folders.size == 1) {
-                                activeFolderUri = newFolder.uri
-                                saveActiveFolderUri(context, newFolder.uri)
+                        scope.launch {
+                            val newFolder = withContext(Dispatchers.IO) { createInternalAlbum(context, newAlbumName.trim()) }
+                            if (newFolder != null) {
+                                folders = folders + newFolder
+                                withContext(Dispatchers.IO) { saveFolders(context, folders) }
+                                if (folders.size == 1) {
+                                    activeFolderUri = newFolder.uri
+                                    withContext(Dispatchers.IO) { saveActiveFolderUri(context, newFolder.uri) }
+                                }
                             }
                         }
-                        showCreateAlbumDialog = false
-                        newAlbumName = ""
+                        showCreateAlbumDialog = false; newAlbumName = ""
                     }
                 }) { Text("CREATE", color = NeonGreen) }
             },
-            dismissButton = {
-                TextButton(onClick = { showCreateAlbumDialog = false; newAlbumName = "" }) { Text("CANCEL", color = TextGray) }
-            }
+            dismissButton = { TextButton(onClick = { showCreateAlbumDialog = false; newAlbumName = "" }) { Text("CANCEL", color = TextGray) } }
         )
     }
 
@@ -375,14 +309,9 @@ fun WallpaperApp() {
             text = { Text("To dismiss SmartThings notifications automatically, please grant Notification Access.", color = TextWhite) },
             containerColor = DarkSurface,
             confirmButton = {
-                TextButton(onClick = {
-                    showPermissionDialog = false
-                    context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                }) { Text("OPEN SETTINGS", color = NeonGreen) }
+                TextButton(onClick = { showPermissionDialog = false; context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }) { Text("OPEN SETTINGS", color = NeonGreen) }
             },
-            dismissButton = {
-                TextButton(onClick = { showPermissionDialog = false }) { Text("LATER", color = TextGray) }
-            }
+            dismissButton = { TextButton(onClick = { showPermissionDialog = false }) { Text("LATER", color = TextGray) } }
         )
     }
     
@@ -390,37 +319,12 @@ fun WallpaperApp() {
         AlertDialog(
             onDismissRequest = { showAccessibilityDialog = false },
             title = { Text("Accessibility Service", color = TextWhite) },
-            text = { Text("To automatically close the Google Assistant overlay, please enable 'Wallpaperer' in Accessibility Settings.", color = TextWhite) },
+            text = { Text("To automatically close the Google Assistant overlay, please enable 'Wallpaperer'.", color = TextWhite) },
             containerColor = DarkSurface,
             confirmButton = {
-                TextButton(onClick = {
-                    showAccessibilityDialog = false
-                    context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                }) { Text("OPEN SETTINGS", color = NeonGreen) }
+                TextButton(onClick = { showAccessibilityDialog = false; context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) { Text("OPEN SETTINGS", color = NeonGreen) }
             },
-            dismissButton = {
-                TextButton(onClick = { showAccessibilityDialog = false }) { Text("LATER", color = TextGray) }
-            }
-        )
-    }
-
-    if (showSamsungFixDialog) {
-        AlertDialog(
-            onDismissRequest = { showSamsungFixDialog = false },
-            title = { Text("Samsung Fix", color = TextWhite) },
-            text = { Text("1. DISABLE 'Pause app activity'\n2. ALLOW 'Unrestricted' battery.", color = TextWhite) },
-            containerColor = DarkSurface,
-            confirmButton = {
-                TextButton(onClick = {
-                    showSamsungFixDialog = false
-                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-                    intent.data = Uri.fromParts("package", context.packageName, null)
-                    context.startActivity(intent)
-                }) { Text("OPEN SETTINGS", color = NeonGreen) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showSamsungFixDialog = false }) { Text("CLOSE", color = TextGray) }
-            }
+            dismissButton = { TextButton(onClick = { showAccessibilityDialog = false }) { Text("LATER", color = TextGray) } }
         )
     }
 
@@ -430,63 +334,147 @@ fun WallpaperApp() {
             title = { Text("Notification Keyword", color = TextWhite) },
             text = {
                 OutlinedTextField(
-                    value = editKeywordText,
-                    onValueChange = { editKeywordText = it },
-                    label = { Text("Keyword") },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = TextWhite, unfocusedTextColor = TextWhite,
-                        cursorColor = NeonGreen, focusedBorderColor = NeonGreen, unfocusedBorderColor = TextGray
-                    )
+                    value = editKeywordText, onValueChange = { editKeywordText = it }, label = { Text("Keyword") }, singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = TextWhite, unfocusedTextColor = TextWhite, cursorColor = NeonGreen, focusedBorderColor = NeonGreen, unfocusedBorderColor = TextGray)
                 )
             },
             containerColor = DarkSurface,
             confirmButton = {
                 TextButton(onClick = {
                     if (folderToEdit != null) {
-                        val updatedList = folders.map { 
-                            if (it.uri == folderToEdit!!.uri) it.copy(notificationKeyword = editKeywordText.trim()) else it 
-                        }
-                        folders = updatedList
-                        saveFolders(context, updatedList)
+                        folders = folders.map { if (it.uri == folderToEdit!!.uri) it.copy(notificationKeyword = editKeywordText.trim()) else it }
+                        scope.launch(Dispatchers.IO) { saveFolders(context, folders) }
                     }
-                    showEditDialog = false
-                    folderToEdit = null
+                    showEditDialog = false; folderToEdit = null
                 }) { Text("SAVE", color = NeonGreen) }
             },
-            dismissButton = {
-                TextButton(onClick = { showEditDialog = false; folderToEdit = null }) { Text("CANCEL", color = TextGray) }
-            }
+            dismissButton = { TextButton(onClick = { showEditDialog = false; folderToEdit = null }) { Text("CANCEL", color = TextGray) } }
         )
     }
 }
 
-// === NEW DETAIL SCREEN ===
+@Composable
+fun SettingsDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE) }
+    
+    var contrastEnabled by remember { mutableStateOf(prefs.getBoolean("pref_contrast_darkening", true)) }
+    var notificationCleaningEnabled by remember { mutableStateOf(prefs.getBoolean("pref_notification_cleaning", true)) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Settings", color = TextWhite, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+                SettingsToggleItem(
+                    title = "Contrast Darkening",
+                    description = "Automatically darken the top area if the wallpaper is too bright for the clock.",
+                    checked = contrastEnabled,
+                    onCheckedChange = {
+                        contrastEnabled = it
+                        prefs.edit { putBoolean("pref_contrast_darkening", it) }
+                    }
+                )
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                SettingsToggleItem(
+                    title = "Notification Cleaning",
+                    description = "Automatically dismiss SmartThings notifications for active albums.",
+                    checked = notificationCleaningEnabled,
+                    onCheckedChange = {
+                        notificationCleaningEnabled = it
+                        prefs.edit { putBoolean("pref_notification_cleaning", it) }
+                    }
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
+                Divider(color = TextGray.copy(alpha = 0.2f))
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text("System Permissions", style = MaterialTheme.typography.labelLarge, color = NeonGreen)
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                Button(
+                    onClick = {
+                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply { data = Uri.fromParts("package", context.packageName, null) }
+                        context.startActivity(intent)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = DarkSurface, contentColor = TextWhite),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("Samsung Fix (Battery/Activity)")
+                }
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                Button(
+                    onClick = { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = DarkSurface, contentColor = TextWhite),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("Notification Access")
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Button(
+                    onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = DarkSurface, contentColor = TextWhite),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("Accessibility Settings")
+                }
+            }
+        },
+        containerColor = DarkSurface,
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("CLOSE", color = NeonGreen) }
+        }
+    )
+}
+
+@Composable
+fun SettingsToggleItem(title: String, description: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable { onCheckedChange(!checked) },
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = TextWhite, fontWeight = FontWeight.SemiBold)
+            Text(description, color = TextGray, style = MaterialTheme.typography.bodySmall)
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = NeonGreen,
+                checkedTrackColor = NeonGreen.copy(alpha = 0.5f),
+                uncheckedThumbColor = TextGray,
+                uncheckedTrackColor = TextGray.copy(alpha = 0.3f)
+            )
+        )
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AlbumDetailScreen(
-    folder: FolderInfo,
-    onBack: () -> Unit,
-    onContentChanged: () -> Unit
-) {
+fun AlbumDetailScreen(folder: FolderInfo, onBack: () -> Unit, onContentChanged: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var photos by remember { mutableStateOf<List<Uri>>(emptyList()) }
     
-    // Load local files
-    var photos by remember { mutableStateOf(getAlbumPhotos(folder.uri)) }
+    LaunchedEffect(folder.uri) { photos = withContext(Dispatchers.IO) { getAlbumPhotos(folder.uri) } }
     
-    // Photo Picker Launcher
-    val pickPhotosLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickMultipleVisualMedia()
-    ) { uris ->
+    val pickPhotosLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
         if (uris.isNotEmpty()) {
             scope.launch {
                 val count = copyPhotosToInternalAlbum(context, uris, folder.uri)
                 if (count > 0) {
-                    // Refresh list
-                    photos = getAlbumPhotos(folder.uri)
-                    Toast.makeText(context, "Added $count photos", Toast.LENGTH_SHORT).show()
+                    photos = withContext(Dispatchers.IO) { getAlbumPhotos(folder.uri) }
                     onContentChanged()
                 }
             }
@@ -498,75 +486,32 @@ fun AlbumDetailScreen(
         topBar = {
             TopAppBar(
                 title = { Text(folder.name, color = TextWhite, fontWeight = FontWeight.Bold) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextWhite)
-                    }
-                },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextWhite) } },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkBackground)
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = { 
-                    pickPhotosLauncher.launch(
-                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                    )
-                },
-                containerColor = NeonGreen,
-                contentColor = Color.Black
-            ) {
+            FloatingActionButton(onClick = { pickPhotosLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, containerColor = NeonGreen, contentColor = Color.Black) {
                 Icon(Icons.Default.Add, contentDescription = "Add Photos")
             }
         }
     ) { innerPadding ->
         if (photos.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize().padding(innerPadding), contentAlignment = Alignment.Center) {
-                Text("No photos yet. Click + to add.", color = TextGray)
-            }
+            Box(modifier = Modifier.fillMaxSize().padding(innerPadding), contentAlignment = Alignment.Center) { Text("No photos yet. Click + to add.", color = TextGray) }
         } else {
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 100.dp),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxSize().padding(innerPadding)
-            ) {
+            LazyVerticalGrid(columns = GridCells.Adaptive(minSize = 100.dp), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize().padding(innerPadding)) {
                 items(photos) { fileUri ->
                     Box(modifier = Modifier.aspectRatio(1f)) {
-                        AsyncImage(
-                            model = fileUri,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .clip(RoundedCornerShape(8.dp))
-                        )
-                        
-                        // Delete Button
+                        AsyncImage(model = fileUri, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp)))
                         IconButton(
                             onClick = {
-                                val file = File(fileUri.path ?: "")
-                                if (file.exists()) {
-                                    if (file.delete()) {
-                                        photos = getAlbumPhotos(folder.uri)
-                                        onContentChanged()
-                                    }
+                                scope.launch {
+                                    val deleted = withContext(Dispatchers.IO) { val file = File(fileUri.path ?: ""); file.exists() && file.delete() }
+                                    if (deleted) { photos = withContext(Dispatchers.IO) { getAlbumPhotos(folder.uri) }; onContentChanged() }
                                 }
                             },
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(4.dp)
-                                .size(24.dp)
-                                .background(Color.Black.copy(alpha = 0.6f), CircleShape)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Delete,
-                                contentDescription = "Delete",
-                                tint = DangerRed,
-                                modifier = Modifier.padding(4.dp)
-                            )
-                        }
+                            modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(24.dp).background(Color.Black.copy(alpha = 0.6f), CircleShape)
+                        ) { Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete", tint = DangerRed, modifier = Modifier.padding(4.dp)) }
                     }
                 }
             }
@@ -575,14 +520,7 @@ fun AlbumDetailScreen(
 }
 
 @Composable
-fun FolderItem(
-    folder: FolderInfo,
-    isActive: Boolean,
-    onSelect: () -> Unit,
-    onManagePhotos: () -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit
-) {
+fun FolderItem(folder: FolderInfo, isActive: Boolean, onSelect: () -> Unit, onManagePhotos: () -> Unit, onEdit: () -> Unit, onDelete: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable { onSelect() },
         shape = RoundedCornerShape(12.dp),
@@ -590,23 +528,13 @@ fun FolderItem(
         border = if (isActive) BorderStroke(1.dp, NeonGreen) else null
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
-            ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    RadioButton(
-                        selected = isActive,
-                        onClick = onSelect,
-                        colors = RadioButtonDefaults.colors(selectedColor = NeonGreen, unselectedColor = TextGray)
-                    )
+                    RadioButton(selected = isActive, onClick = onSelect, colors = RadioButtonDefaults.colors(selectedColor = NeonGreen, unselectedColor = TextGray))
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(folder.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = if (isActive) NeonGreen else TextWhite)
-                        if (!folder.notificationKeyword.isNullOrEmpty()) {
-                             Text("Keyword: ${folder.notificationKeyword}", style = MaterialTheme.typography.bodySmall, color = TextGray)
-                        }
+                        if (!folder.notificationKeyword.isNullOrEmpty()) { Text("Keyword: ${folder.notificationKeyword}", style = MaterialTheme.typography.bodySmall, color = TextGray) }
                     }
                 }
                 Row {
@@ -615,139 +543,49 @@ fun FolderItem(
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = onManagePhotos,
-                modifier = Modifier.fillMaxWidth(),
-                border = BorderStroke(1.dp, TextGray.copy(alpha = 0.5f)),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = TextWhite)
-            ) {
-                Text("MANAGE PHOTOS")
-            }
+            OutlinedButton(onClick = onManagePhotos, modifier = Modifier.fillMaxWidth(), border = BorderStroke(1.dp, TextGray.copy(alpha = 0.5f)), colors = ButtonDefaults.outlinedButtonColors(contentColor = TextWhite)) { Text("MANAGE PHOTOS") }
         }
     }
 }
 
-// --- Helpers ---
-
-fun getAlbumPhotos(folderUriStr: String): List<Uri> {
-    val folder = File(Uri.parse(folderUriStr).path ?: return emptyList())
-    if (!folder.exists() || !folder.isDirectory) return emptyList()
-    
-    return folder.listFiles()
-        ?.filter { it.isFile && isImageFile(it.name) }
-        ?.map { Uri.fromFile(it) }
-        ?: emptyList()
+fun getAlbumPhotos(uriStr: String): List<Uri> {
+    val folder = File(Uri.parse(uriStr).path ?: return emptyList())
+    return folder.listFiles()?.filter { it.isFile && isImageFile(it.name) }?.map { Uri.fromFile(it) } ?: emptyList()
 }
 
-fun isImageFile(name: String): Boolean {
-    val lower = name.lowercase()
-    return lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".webp")
-}
+fun isImageFile(name: String) = name.lowercase().let { it.endsWith(".jpg") || it.endsWith(".jpeg") || it.endsWith(".png") || it.endsWith(".webp") }
 
 fun createInternalAlbum(context: Context, name: String): FolderInfo? {
-    val folderId = UUID.randomUUID().toString()
-    val albumDir = File(context.filesDir, "albums/$folderId")
-    if (!albumDir.exists() && albumDir.mkdirs()) {
-        return FolderInfo(Uri.fromFile(albumDir).toString(), name)
-    }
+    val dir = File(context.filesDir, "albums/${UUID.randomUUID()}")
+    if (dir.mkdirs()) return FolderInfo(Uri.fromFile(dir).toString(), name)
     return null
 }
 
 fun deleteInternalAlbum(uriStr: String) {
-    try {
-        val file = File(Uri.parse(uriStr).path ?: return)
-        if (file.exists()) file.deleteRecursively()
-    } catch (e: Exception) {
-        Log.e(TAG, "Error deleting internal album", e)
-    }
+    try { File(Uri.parse(uriStr).path ?: return).deleteRecursively() } catch (e: Exception) { Log.e(TAG, "Error", e) }
 }
 
-suspend fun copyPhotosToInternalAlbum(context: Context, sourceUris: List<Uri>, targetAlbumUriStr: String): Int {
-    return withContext(Dispatchers.IO) {
-        var count = 0
+suspend fun copyPhotosToInternalAlbum(context: Context, sourceUris: List<Uri>, targetUriStr: String): Int = withContext(Dispatchers.IO) {
+    var count = 0
+    val dir = File(Uri.parse(targetUriStr).path ?: return@withContext 0)
+    for (src in sourceUris) {
         try {
-            val albumDir = File(Uri.parse(targetAlbumUriStr).path ?: return@withContext 0)
-            if (!albumDir.exists()) albumDir.mkdirs()
-
-            for (srcUri in sourceUris) {
-                try {
-                    val fileName = getFileName(context, srcUri) ?: "img_${System.currentTimeMillis()}_${count}.jpg"
-                    var destFile = File(albumDir, fileName)
-                    var dupeCounter = 1
-                    while (destFile.exists()) {
-                        val nameWithoutExt = fileName.substringBeforeLast(".")
-                        val ext = fileName.substringAfterLast(".", "")
-                        destFile = File(albumDir, "${nameWithoutExt}_${dupeCounter}.${ext}")
-                        dupeCounter++
-                    }
-                    context.contentResolver.openInputStream(srcUri)?.use { input ->
-                        destFile.outputStream().use { output ->
-                            input.copyTo(output)
-                            count++
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error copying individual photo", e)
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in photo copy process", e)
-        }
-        count
+            val dest = File(dir, "img_${System.currentTimeMillis()}_$count.jpg")
+            context.contentResolver.openInputStream(src)?.use { input -> dest.outputStream().use { output -> input.copyTo(output); count++ } }
+        } catch (e: Exception) { }
     }
+    count
 }
 
-@SuppressLint("Range")
-fun getFileName(context: Context, uri: Uri): String? {
-    var result: String? = null
-    if (uri.scheme == "content") {
-        val cursor = context.contentResolver.query(uri, null, null, null, null)
-        try {
-            if (cursor != null && cursor.moveToFirst()) {
-                result = cursor.getString(cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME))
-            }
-        } finally { cursor?.close() }
-    }
-    if (result == null) {
-        result = uri.path
-        val cut = result?.lastIndexOf('/')
-        if (cut != null && cut != -1) result = result?.substring(cut + 1)
-    }
-    return result
-}
-
-// --- Persistence ---
-
-fun saveFolders(context: Context, folders: List<FolderInfo>) {
-    val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putString("saved_folders_json", Gson().toJson(folders)) }
-}
-
+fun saveFolders(context: Context, folders: List<FolderInfo>) { context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE).edit { putString("saved_folders_json", Gson().toJson(folders)) } }
 fun loadFolders(context: Context): List<FolderInfo> {
-    val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
-    val json = prefs.getString("saved_folders_json", null) ?: return emptyList()
-    return Gson().fromJson(json, object : TypeToken<List<FolderInfo>>() {}.type) ?: emptyList()
+    val json = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE).getString("saved_folders_json", null) ?: return emptyList()
+    return try { Gson().fromJson(json, object : TypeToken<List<FolderInfo>>() {}.type) } catch (e: Exception) { emptyList() }
 }
-
-fun saveActiveFolderUri(context: Context, uri: String?) {
-    val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
-    prefs.edit { putString("active_folder_uri", uri) }
-}
-
-fun loadActiveFolderUri(context: Context): String? {
-    val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
-    return prefs.getString("active_folder_uri", null)
-}
-
+fun saveActiveFolderUri(context: Context, uri: String?) { context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE).edit { putString("active_folder_uri", uri) } }
+fun loadActiveFolderUri(context: Context) = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE).getString("active_folder_uri", null)
 fun isAccessibilityServiceEnabled(context: Context): Boolean {
-    val expectedComponentName = ComponentName(context, AutoBackService::class.java)
-    val enabledServicesSetting = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
-    val colonSplitter = TextUtils.SimpleStringSplitter(':')
-    colonSplitter.setString(enabledServicesSetting)
-    while (colonSplitter.hasNext()) {
-        val componentNameString = colonSplitter.next()
-        val enabledComponent = ComponentName.unflattenFromString(componentNameString)
-        if (enabledComponent != null && enabledComponent == expectedComponentName) return true
-    }
-    return false
+    val expected = ComponentName(context, AutoBackService::class.java)
+    val setting = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
+    return setting.split(':').any { ComponentName.unflattenFromString(it) == expected }
 }
