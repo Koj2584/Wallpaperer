@@ -4,7 +4,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.os.Build
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -33,11 +32,11 @@ class NotificationCleanerService : NotificationListenerService() {
     override fun onCreate() {
         super.onCreate()
         val filter = IntentFilter(ACTION_DISMISS_SMARTTHINGS)
-        if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(dismissalReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(dismissalReceiver, filter)
-        }
+        
+        // Používáme přímo nativní registerReceiver s explicitním příznakem Context.RECEIVER_NOT_EXPORTED.
+        // Vzhledem k tomu, že minSdk projektu je >= 34, je tento příznak vyžadován
+        // pro všechny dynamicky registrované receivery pro interní broadcasty.
+        registerReceiver(dismissalReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
     }
 
     override fun onDestroy() {
@@ -58,10 +57,12 @@ class NotificationCleanerService : NotificationListenerService() {
                 val title = extras.getCharSequence("android.title")?.toString() ?: ""
                 val text = extras.getCharSequence("android.text")?.toString() ?: ""
 
+                // Kontrola, zda jde o SmartThings (Samsung OneConnect)
                 val isSmartThings = packageName == "com.samsung.android.oneconnect" || 
                                     title.contains("SmartThings", ignoreCase = true) ||
                                     text.contains("SmartThings", ignoreCase = true)
 
+                // Kontrola klíčového slova (název alba) v textu notifikace
                 val matchesKeyword = title.contains(keyword, ignoreCase = true) || 
                                      text.contains(keyword, ignoreCase = true)
 
