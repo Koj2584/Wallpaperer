@@ -9,6 +9,7 @@ val NeonGreen = Color(0xFF00E676)
 val DangerRed = Color(0xFFD32F2F)
 val TextWhite = Color(0xFFEEEEEE)
 val TextGray = Color(0xFFAAAAAA)
+val WarmAmber = Color(0xFFE0D7C6)
 
 // Default Compose Colors
 val Purple80 = Color(0xFFD0BCFF)

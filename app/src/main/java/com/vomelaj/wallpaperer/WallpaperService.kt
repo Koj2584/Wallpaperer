@@ -10,6 +10,7 @@ import android.view.SurfaceHolder
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
+import androidx.exifinterface.media.ExifInterface
 import kotlinx.coroutines.*
 import java.io.BufferedInputStream
 import java.util.Collections
@@ -156,7 +157,15 @@ class WallpaperService : BaseWallpaperService() {
             val reqW = if (surfaceWidth > 0) surfaceWidth else resources.displayMetrics.widthPixels
             val reqH = if (surfaceHeight > 0) surfaceHeight else resources.displayMetrics.heightPixels
 
-            val raw = withContext(Dispatchers.IO) { decodeWithReuse(nextUri, reqW, reqH) } ?: return null
+            var raw = withContext(Dispatchers.IO) { decodeWithReuse(nextUri, reqW, reqH) } ?: return null
+
+            // Fix EXIF rotation
+            val rotation = withContext(Dispatchers.IO) { getExifRotation(nextUri) }
+            if (rotation != 0f) {
+                val rotMatrix = android.graphics.Matrix().apply { postRotate(rotation) }
+                val rotated = Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, rotMatrix, true)
+                if (rotated !== raw) { reusableBitmaps.add(raw); raw = rotated }
+            }
 
             val prefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
             val isContrastEnabled = prefs.getBoolean("pref_contrast_darkening", true)
@@ -184,7 +193,26 @@ class WallpaperService : BaseWallpaperService() {
                 contentResolver.openInputStream(uri)?.use { stream ->
                     BufferedInputStream(stream, 32 * 1024).use { BitmapFactory.decodeStream(it, null, options) }
                 }
-            } catch (e: Exception) { null }
+            } catch (e: Exception) {
+                Log.e("WallpaperService", "Error decoding bitmap", e)
+                null
+            }
+        }
+
+        private fun getExifRotation(uri: Uri): Float {
+            return try {
+                val orientation = contentResolver.openInputStream(uri)?.use { stream ->
+                    ExifInterface(stream).getAttributeInt(
+                        ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL
+                    )
+                } ?: ExifInterface.ORIENTATION_NORMAL
+                when (orientation) {
+                    ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+                    ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+                    ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+                    else -> 0f
+                }
+            } catch (e: Exception) { 0f }
         }
 
         private fun findReusableBitmap(options: BitmapFactory.Options): Bitmap? {
