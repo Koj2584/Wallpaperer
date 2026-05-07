@@ -1,6 +1,5 @@
 package com.vomelaj.wallpaperer
 
-import android.content.SharedPreferences
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Paint
@@ -10,10 +9,8 @@ import android.view.SurfaceHolder
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
-import androidx.core.net.toUri
 import kotlinx.coroutines.*
 import java.io.BufferedInputStream
-import java.io.File
 import java.util.Collections
 import java.util.concurrent.ConcurrentLinkedQueue
 
@@ -25,10 +22,10 @@ class WallpaperService : BaseWallpaperService() {
 
     override fun onCreateEngine(): Engine = WallpaperEngine()
 
-    inner class WallpaperEngine : Engine(), SharedPreferences.OnSharedPreferenceChangeListener {
+    inner class WallpaperEngine : Engine(), android.content.SharedPreferences.OnSharedPreferenceChangeListener {
         private val engineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+        private lateinit var repository: WallpaperRepository
         
-        // Synchronized queues for smooth buffering
         private val bitmapBuffer = ConcurrentLinkedQueue<Pair<Bitmap, android.graphics.Matrix>>()
         private val reusableBitmaps = Collections.synchronizedSet(mutableSetOf<Bitmap>())
         
@@ -42,19 +39,20 @@ class WallpaperService : BaseWallpaperService() {
 
         private val paint = Paint().apply {
             isFilterBitmap = true
-            isAntiAlias = false // Not needed for wallpapers, saves CPU
-            isDither = true      // Necessary for quality with RGB_565
+            isAntiAlias = false
+            isDither = true
         }
 
         override fun onCreate(surfaceHolder: SurfaceHolder?) {
             super.onCreate(surfaceHolder)
+            repository = WallpaperRepository(applicationContext)
             val prefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
             prefs.registerOnSharedPreferenceChangeListener(this)
             if (!isPreview) activeEngineCount++
 
             engineScope.launch {
-                fillBuffer() // Initial buffer fill
-                performSwap() // First render
+                fillBuffer()
+                performSwap()
             }
         }
 
@@ -70,9 +68,8 @@ class WallpaperService : BaseWallpaperService() {
             if (visible) {
                 draw()
             } else {
-                // Immediate swap when turning off.
+                // Keep the swap here as requested to prevent flickering on screen on
                 performSwap()
-                // Refill buffer in background
                 engineScope.launch {
                     fillBuffer()
                 }
@@ -80,15 +77,14 @@ class WallpaperService : BaseWallpaperService() {
         }
 
         private fun performSwap() {
-            val next = bitmapBuffer.poll() ?: return // If buffer is empty, keep current image
+            val next = bitmapBuffer.poll() ?: return
             
             val old = currentBitmap
             currentBitmap = next.first
             currentMatrix = next.second
             
-            draw() // Render to surface
+            draw()
             
-            // Reuse memory instead of recycling if possible
             if (old != null && old.isMutable) {
                 reusableBitmaps.add(old)
             } else {
@@ -122,7 +118,6 @@ class WallpaperService : BaseWallpaperService() {
         }
 
         private suspend fun fillBuffer() {
-            // Maintain 2 images in buffer
             while (bitmapBuffer.size < 2) {
                 val pair = prepareSingleBitmap() ?: break
                 bitmapBuffer.add(pair)
@@ -130,22 +125,20 @@ class WallpaperService : BaseWallpaperService() {
         }
 
         private suspend fun prepareSingleBitmap(): Pair<Bitmap, android.graphics.Matrix>? {
-            val prefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
-            val uriStr = prefs.getString("active_folder_uri", null) ?: return null
+            val activeUri = repository.getActiveFolderUri() ?: return null
 
             if (unshownImages.isEmpty()) {
-                refillShuffleBag(uriStr)
+                refillShuffleBag(activeUri)
                 if (unshownImages.isEmpty()) return null
             }
 
             val nextUri = unshownImages.removeAt(0)
-
             val reqW = if (surfaceWidth > 0) surfaceWidth else resources.displayMetrics.widthPixels
             val reqH = if (surfaceHeight > 0) surfaceHeight else resources.displayMetrics.heightPixels
 
             val raw = withContext(Dispatchers.IO) { decodeWithReuse(nextUri, reqW, reqH) } ?: return null
 
-            // Contrast analysis (clock area) - respects user preference
+            val prefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
             val isContrastEnabled = prefs.getBoolean("pref_contrast_darkening", true)
             if (isContrastEnabled && WallpaperContrastChecker.isClockAreaTooBright(raw)) {
                 raw.applyRadialClockScrim()
@@ -165,13 +158,11 @@ class WallpaperService : BaseWallpaperService() {
                     inPreferredConfig = Bitmap.Config.RGB_565
                     inMutable = true
                     inTempStorage = ByteArray(32 * 1024)
-                    
-                    // Zero-allocation decoding attempt
                     inBitmap = findReusableBitmap(options)
                 }
 
                 contentResolver.openInputStream(uri)?.use { stream ->
-                    BufferedInputStream(stream).use { BitmapFactory.decodeStream(it, null, options) }
+                    BufferedInputStream(stream, 32 * 1024).use { BitmapFactory.decodeStream(it, null, options) }
                 }
             } catch (e: Exception) { null }
         }
@@ -195,7 +186,7 @@ class WallpaperService : BaseWallpaperService() {
         private fun canUseForInBitmap(candidate: Bitmap, targetOptions: BitmapFactory.Options): Boolean {
             val width = targetOptions.outWidth / targetOptions.inSampleSize
             val height = targetOptions.outHeight / targetOptions.inSampleSize
-            val byteCount = width * height * 2 // RGB_565 = 2 bytes per pixel
+            val byteCount = width * height * 2 // RGB_565
             return candidate.allocationByteCount >= byteCount
         }
 
@@ -209,16 +200,10 @@ class WallpaperService : BaseWallpaperService() {
 
         private fun refillShuffleBag(uriStr: String) {
             try {
-                val folder = File(uriStr.toUri().path ?: return)
-                folder.listFiles()?.filter { it.isFile && isImageFile(it.name) }?.forEach {
-                    unshownImages.add(Uri.fromFile(it))
-                }
+                unshownImages.clear()
+                unshownImages.addAll(repository.getPhotos(uriStr))
                 unshownImages.shuffle()
             } catch (e: Exception) {}
-        }
-
-        private fun isImageFile(n: String) = n.lowercase().let { 
-            it.endsWith(".jpg") || it.endsWith(".jpeg") || it.endsWith(".png") || it.endsWith(".webp") 
         }
 
         private fun calculateInSampleSize(o: BitmapFactory.Options, reqW: Int, reqH: Int): Int {
@@ -240,15 +225,12 @@ class WallpaperService : BaseWallpaperService() {
             currentBitmap = null
         }
 
-        override fun onSharedPreferenceChanged(p: SharedPreferences?, k: String?) {
+        override fun onSharedPreferenceChanged(p: android.content.SharedPreferences?, k: String?) {
             if (k == "active_folder_uri" || k == "pref_contrast_darkening") {
                 engineScope.launch {
                     if (k == "active_folder_uri") unshownImages.clear()
-                    
-                    // Clear buffer to apply new settings or new folder immediately
                     bitmapBuffer.forEach { it.first.recycle() }
                     bitmapBuffer.clear()
-
                     fillBuffer()
                     performSwap()
                 }
