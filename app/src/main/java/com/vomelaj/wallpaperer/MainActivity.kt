@@ -426,8 +426,23 @@ fun AlbumDetailScreen(folder: FolderInfo, onBack: () -> Unit, viewModel: MainVie
                         IconButton(
                             onClick = {
                                 scope.launch(Dispatchers.IO) {
-                                    val deleted = try { val file = File(fileUri.path ?: ""); file.exists() && file.delete() } catch(e: Exception) { false }
-                                    if (deleted) photos = viewModel.getPhotos(folder.uri)
+                                    val path = fileUri.path
+                                    val deleted = if (!path.isNullOrEmpty()) {
+                                        try { 
+                                            val file = File(path)
+                                            file.exists() && file.delete() 
+                                        } catch(e: Exception) { 
+                                            Log.e(TAG, "Error deleting photo", e)
+                                            false 
+                                        }
+                                    } else false
+                                    
+                                    if (deleted) {
+                                        val newPhotos = viewModel.getPhotos(folder.uri)
+                                        withContext(Dispatchers.Main) {
+                                            photos = newPhotos
+                                        }
+                                    }
                                 }
                             },
                             modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(24.dp).background(Color.Black.copy(alpha = 0.6f), CircleShape)

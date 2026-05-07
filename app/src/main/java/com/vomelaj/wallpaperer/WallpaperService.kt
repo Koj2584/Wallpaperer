@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Paint
 import android.net.Uri
 import android.service.wallpaper.WallpaperService as BaseWallpaperService
+import android.util.Log
 import android.view.SurfaceHolder
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -36,6 +37,8 @@ class WallpaperService : BaseWallpaperService() {
         
         private var surfaceWidth = 0
         private var surfaceHeight = 0
+        
+        private val drawLock = Any()
 
         private val paint = Paint().apply {
             isFilterBitmap = true
@@ -65,12 +68,11 @@ class WallpaperService : BaseWallpaperService() {
         }
 
         override fun onVisibilityChanged(visible: Boolean) {
-            if (visible) {
-                draw()
-            } else {
-                // Keep the swap here as requested to prevent flickering on screen on
-                performSwap()
-                engineScope.launch {
+            engineScope.launch {
+                if (visible) {
+                    draw()
+                } else {
+                    performSwap()
                     fillBuffer()
                 }
             }
@@ -79,9 +81,12 @@ class WallpaperService : BaseWallpaperService() {
         private fun performSwap() {
             val next = bitmapBuffer.poll() ?: return
             
-            val old = currentBitmap
-            currentBitmap = next.first
-            currentMatrix = next.second
+            val old = synchronized(drawLock) {
+                val previous = currentBitmap
+                currentBitmap = next.first
+                currentMatrix = next.second
+                previous
+            }
             
             draw()
             
@@ -95,13 +100,24 @@ class WallpaperService : BaseWallpaperService() {
         override fun onSurfaceChanged(holder: SurfaceHolder?, format: Int, width: Int, height: Int) {
             surfaceWidth = width
             surfaceHeight = height
-            currentBitmap?.let { currentMatrix = calculateMatrix(it, width, height) }
+            synchronized(drawLock) {
+                currentBitmap?.let { currentMatrix = calculateMatrix(it, width, height) }
+            }
             draw()
         }
 
         private fun draw() {
             val holder = surfaceHolder ?: return
-            val bitmap = currentBitmap ?: return
+            
+            var bitmapToDraw: Bitmap? = null
+            var matrixToDraw: android.graphics.Matrix? = null
+            
+            synchronized(drawLock) {
+                bitmapToDraw = currentBitmap
+                matrixToDraw = currentMatrix
+            }
+            
+            val bitmap = bitmapToDraw ?: return
             
             val canvas = try {
                 holder.lockHardwareCanvas()
@@ -110,10 +126,14 @@ class WallpaperService : BaseWallpaperService() {
             } ?: return
 
             try {
-                val matrix = currentMatrix ?: calculateMatrix(bitmap, canvas.width, canvas.height)
+                val matrix = matrixToDraw ?: calculateMatrix(bitmap, canvas.width, canvas.height)
                 canvas.drawBitmap(bitmap, matrix, paint)
             } finally {
-                try { holder.unlockCanvasAndPost(canvas) } catch (e: Exception) {}
+                try { 
+                    holder.unlockCanvasAndPost(canvas) 
+                } catch (e: Exception) {
+                    Log.e("WallpaperService", "Error unlocking canvas", e)
+                }
             }
         }
 
@@ -203,7 +223,9 @@ class WallpaperService : BaseWallpaperService() {
                 unshownImages.clear()
                 unshownImages.addAll(repository.getPhotos(uriStr))
                 unshownImages.shuffle()
-            } catch (e: Exception) {}
+            } catch (e: Exception) {
+                Log.e("WallpaperService", "Error refilling shuffle bag", e)
+            }
         }
 
         private fun calculateInSampleSize(o: BitmapFactory.Options, reqW: Int, reqH: Int): Int {

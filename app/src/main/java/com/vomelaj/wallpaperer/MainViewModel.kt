@@ -2,6 +2,8 @@ package com.vomelaj.wallpaperer
 
 import android.app.Application
 import android.net.Uri
+import android.util.Log
+import android.webkit.MimeTypeMap
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -62,7 +64,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteAlbum(folder: FolderInfo) {
         viewModelScope.launch(Dispatchers.IO) {
-            try { File(Uri.parse(folder.uri).path ?: "").deleteRecursively() } catch (e: Exception) {}
+            try {
+                val path = Uri.parse(folder.uri).path
+                if (!path.isNullOrEmpty()) {
+                    File(path).deleteRecursively()
+                }
+            } catch (e: Exception) {
+                Log.e("MainViewModel", "Error deleting album", e)
+            }
             val newList = folders.filter { it.uri != folder.uri }
             repository.saveFolders(newList)
             withContext(Dispatchers.Main) {
@@ -83,14 +92,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val dir = File(Uri.parse(folderUri).path ?: return@withContext 0)
         for (src in uris) {
             try {
-                val dest = File(dir, "img_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(6)}.jpg")
+                val mimeType = context.contentResolver.getType(src)
+                val extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType) ?: "jpg"
+                val dest = File(dir, "img_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(6)}.$extension")
                 context.contentResolver.openInputStream(src)?.use { input ->
                     dest.outputStream().use { output -> input.copyTo(output); count++ }
                 }
-            } catch (e: Exception) {}
+            } catch (e: Exception) {
+                Log.e("MainViewModel", "Error adding photo", e)
+            }
         }
         count
     }
 
-    fun getPhotos(folderUri: String): List<Uri> = repository.getPhotos(folderUri)
+    suspend fun getPhotos(folderUri: String): List<Uri> = withContext(Dispatchers.IO) {
+        repository.getPhotos(folderUri)
+    }
 }

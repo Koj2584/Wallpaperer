@@ -15,6 +15,7 @@ class WallpaperRepository(private val context: Context) {
         return try {
             gson.fromJson(json, object : TypeToken<List<FolderInfo>>() {}.type)
         } catch (e: Exception) {
+            android.util.Log.e("WallpaperRepository", "Error parsing folders JSON", e)
             emptyList()
         }
     }

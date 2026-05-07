@@ -23,30 +23,35 @@ object WallpaperContrastChecker {
         val targetHeight = (bitmap.height * 0.30).toInt().coerceAtLeast(1)
 
         // Sample a grid of 20x20 pixels
-        val samplesCount = 20
-        val pixels = IntArray(samplesCount * samplesCount)
+        val samplesX = 20
+        val samplesY = 20
         
-        // We use a small scaled bitmap to sample the area efficiently
-        // This is often faster than manual stepping with getPixels for large images
         return try {
-            val region = Bitmap.createBitmap(bitmap, startX, startY, targetWidth, targetHeight)
-            val scaled = Bitmap.createScaledBitmap(region, samplesCount, samplesCount, false)
-            scaled.getPixels(pixels, 0, samplesCount, 0, 0, samplesCount, samplesCount)
-            
-            if (region != bitmap) region.recycle()
-            scaled.recycle()
+            val stepX = (targetWidth / samplesX).coerceAtLeast(1)
+            val stepY = (targetHeight / samplesY).coerceAtLeast(1)
 
             var totalLuminance = 0.0
-            for (pixel in pixels) {
-                val r = (pixel shr 16) and 0xFF
-                val g = (pixel shr 8) and 0xFF
-                val b = pixel and 0xFF
-                
-                // Weighted luminance formula (0.2126*R + 0.7152*G + 0.0722*B)
-                totalLuminance += (0.2126 * r + 0.7152 * g + 0.0722 * b)
+            var count = 0
+
+            for (y in 0 until samplesY) {
+                for (x in 0 until samplesX) {
+                    val px = startX + x * stepX
+                    val py = startY + y * stepY
+                    
+                    if (px < bitmap.width && py < bitmap.height) {
+                        val pixel = bitmap.getPixel(px, py)
+                        val r = (pixel shr 16) and 0xFF
+                        val g = (pixel shr 8) and 0xFF
+                        val b = pixel and 0xFF
+                        
+                        // Weighted luminance formula (0.2126*R + 0.7152*G + 0.0722*B)
+                        totalLuminance += (0.2126 * r + 0.7152 * g + 0.0722 * b)
+                        count++
+                    }
+                }
             }
 
-            (totalLuminance / (samplesCount * samplesCount)) > 175
+            if (count == 0) false else (totalLuminance / count) > 175
         } catch (e: Exception) {
             false
         }
