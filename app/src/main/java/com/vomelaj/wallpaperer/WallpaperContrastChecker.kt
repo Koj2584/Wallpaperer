@@ -1,11 +1,12 @@
 package com.vomelaj.wallpaperer
 
 import android.graphics.Bitmap
+import android.graphics.Color
 
 /**
  * Ultra-fast contrast checker for wallpapers.
  * Analyzes the brightness of the area where the system clock usually resides.
- * Optimized for speed using bulk pixel reading.
+ * Optimized for speed (zero allocations) and lightness.
  */
 object WallpaperContrastChecker {
 

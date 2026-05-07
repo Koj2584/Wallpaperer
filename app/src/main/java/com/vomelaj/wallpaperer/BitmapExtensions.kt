@@ -8,22 +8,32 @@ import android.graphics.RadialGradient
 import android.graphics.Shader
 
 /**
- * Aplikuje stín pro hodiny přímo do existující bitmapy bez vytváření kopií.
- * Vyžaduje, aby byla bitmapa načtena jako 'mutable'.
+ * Aplikuje stín pro hodiny přímo do existující bitmapy.
+ * Respektuje rotaci EXIF tak, aby byl stín vždy nahoře u hodin.
  */
-fun Bitmap.applyRadialClockScrim(): Bitmap {
-    if (!this.isMutable) return this // Pojistka
+fun Bitmap.applyRadialClockScrim(rotation: Int = 0): Bitmap {
+    if (!this.isMutable) return this 
     
     val canvas = Canvas(this)
-    val width = this.width.toFloat()
-    val height = this.height.toFloat()
-
-    val centerX = width * 0.5f
-    val centerY = height * 0.2f
-    val radius = width * 0.45f
+    val bw = this.width.toFloat()
+    val bh = this.height.toFloat()
     
-    // Použijeme barvu s alfa kanálem - Android ji při vykreslení do RGB_565 
-    // automaticky smíchá (blend) s podkladem.
+    // Rozměry tak, jak budou vidět na displeji po rotaci
+    val dw = if (rotation % 180 != 0) bh else bw
+    val dh = if (rotation % 180 != 0) bw else bh
+
+    canvas.save()
+    
+    // Transformujeme plátno tak, abychom mohli kreslit v souřadnicích displeje (0,0 = vlevo nahoře)
+    // To odpovídá inverzní operaci k té, kterou děláme při vykreslování na plochu.
+    canvas.translate(bw / 2f, bh / 2f)
+    canvas.rotate(-rotation.toFloat())
+    canvas.translate(-dw / 2f, -dh / 2f)
+
+    val centerX = dw * 0.5f
+    val centerY = dh * 0.2f
+    val radius = dw * 0.45f
+    
     val centerColor = Color.parseColor("#A6000000") 
     val edgeColor = Color.TRANSPARENT
 
@@ -36,6 +46,9 @@ fun Bitmap.applyRadialClockScrim(): Bitmap {
         isDither = true
     }
 
-    canvas.drawRect(0f, 0f, width, height * 0.5f, paint)
+    // Vykreslíme stmívací obdélník (horní polovina displeje)
+    canvas.drawRect(0f, 0f, dw, dh * 0.5f, paint)
+    
+    canvas.restore()
     return this
 }
